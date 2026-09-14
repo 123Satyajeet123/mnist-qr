@@ -11,6 +11,9 @@ QR_MAX = 2953                 # version 40, error correction L, byte mode
 # transmitted in the HTTP request. The page at PAGE_URL is a static stub that
 # only inflates what the scanner already carried.
 PAGE_URL = "https://123satyajeet123.github.io/mnist-qr/#"
+
+# Scanners need dark modules on a light field; inverting fails outright.
+QR_DARK, QR_LIGHT = "#0e3a35", "#f5f8f7"
 CONV_OUT, KERNEL, CLASSES = 24, 5, 10
 HERE = pathlib.Path(__file__).parent
 
@@ -97,6 +100,42 @@ def viewer_html(blob, model):
     return source
 
 
+def styled_qr(url, model, dest, share=0.04):
+    """A QR with the code's own colours and one real kernel in the middle.
+
+    The art budget is the error-correction budget and nothing more. At this
+    payload the code is version 40-L, whose recovery is 7% of the symbol —
+    measured: a 7% centre hole still decodes, 8% does not. So a mark can cover a
+    few percent and that is the whole design space. Image-style QR art needs
+    level H, which at version 40 holds 1,273 bytes: less than half of this.
+    """
+    from PIL import Image, ImageDraw
+
+    qr = segno.make(url, error="l", mode="byte")
+    qr.save(dest, scale=12, border=4, dark=QR_DARK, light=QR_LIGHT)
+
+    kernels = unpack(pack(model))[5]           # conv weights, +1 / -1
+    image = Image.open(dest).convert("RGB")
+    side = image.size[0]
+    draw = ImageDraw.Draw(image)
+
+    span = int(side * share ** 0.5)
+    span -= span % 5                           # whole pixels per kernel cell
+    origin = (side - span) // 2
+    draw.rounded_rectangle(
+        [origin - 10, origin - 10, origin + span + 10, origin + span + 10],
+        radius=14, fill=QR_LIGHT)
+    cell = span // 5
+    for tap in range(25):
+        if kernels[tap, 0] > 0:
+            row, col = divmod(tap, 5)
+            draw.rectangle([origin + col * cell, origin + row * cell,
+                            origin + (col + 1) * cell - 1,
+                            origin + (row + 1) * cell - 1], fill=QR_DARK)
+    image.save(dest)
+    return qr.version
+
+
 def build(model_path):
     model = np.load(model_path)
     raw = pack(model)
@@ -146,7 +185,8 @@ def build(model_path):
 
     qr = segno.make(url, error="l", mode="byte")
     qr.save(HERE / "mnist_qr.png", scale=16, border=4)
-    print(f"  QR version {qr.version}-L  ->  mnist_qr.png")
+    version = styled_qr(url, model, HERE / "mnist_qr_styled.png")
+    print(f"  QR version {version}-L  ->  mnist_qr.png, mnist_qr_styled.png")
     return True
 
 
