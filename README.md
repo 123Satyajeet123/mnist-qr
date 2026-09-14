@@ -66,9 +66,12 @@ classifier, canvas and all.
 
 ## The other real limitation
 
-**It needs a ≥1080p capture.** 177 modules square needs roughly two camera pixels
-per module. Measured: 1080p and 1440p decode, 720p and 480p fail. Scan the
-full-resolution image, not a timeline thumbnail.
+**Scanning.** Both codes decode reliably from 480p up, measured with `zbar`
+across 480/600/720/900/1080/1200/1600/2400 px captures. The universal build is
+QR v39 (161 modules) rather than v40 (177), so it is the easier of the two to
+read. An earlier draft of this README claimed a 1080p floor; that was an
+artifact of OpenCV's QR detector, which fails on these codes entirely while
+`zbar` and phone cameras read them fine.
 
 ## How it is delivered
 
