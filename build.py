@@ -100,39 +100,46 @@ def viewer_html(blob, model):
     return source
 
 
-def styled_qr(url, model, dest, share=0.04):
-    """A QR with the code's own colours and one real kernel in the middle.
+def styled_qr(url, model, dest, digit=3, share=0.045):
+    """A QR in the project's colours with a real MNIST digit in the middle.
 
-    The art budget is the error-correction budget and nothing more. At this
-    payload the code is version 40-L, whose recovery is 7% of the symbol —
-    measured: a 7% centre hole still decodes, 8% does not. So a mark can cover a
-    few percent and that is the whole design space. Image-style QR art needs
-    level H, which at version 40 holds 1,273 bytes: less than half of this.
+    The art budget is the error-correction budget and nothing more. Measured on
+    this payload (version 40-L): a 7% centre hole still decodes, 8% does not.
+    Image-style QR art needs level H, which holds 1,273 bytes at version 40 —
+    less than half of what is in here, so it is not an option at any setting.
+
+    The mark is a test-set digit rather than a convolution kernel: a 5x5 binary
+    kernel is honest but reads as a random box, which helps nobody.
     """
     from PIL import Image, ImageDraw
 
     qr = segno.make(url, error="l", mode="byte")
     qr.save(dest, scale=12, border=4, dark=QR_DARK, light=QR_LIGHT)
 
-    kernels = unpack(pack(model))[5]           # conv weights, +1 / -1
-    image = Image.open(dest).convert("RGB")
-    side = image.size[0]
-    draw = ImageDraw.Draw(image)
+    # model.npz carries the first 300 test images, so this needs no dataset.
+    labels, images = model["yte"], model["xte"]
+    sample = images[int(np.where(labels == digit)[0][0])]
+
+    canvas = Image.open(dest).convert("RGB")
+    side = canvas.size[0]
+    draw = ImageDraw.Draw(canvas)
 
     span = int(side * share ** 0.5)
-    span -= span % 5                           # whole pixels per kernel cell
+    span -= span % 28                       # whole pixels per source pixel
     origin = (side - span) // 2
+    pad = span // 9
     draw.rounded_rectangle(
-        [origin - 10, origin - 10, origin + span + 10, origin + span + 10],
-        radius=14, fill=QR_LIGHT)
-    cell = span // 5
-    for tap in range(25):
-        if kernels[tap, 0] > 0:
-            row, col = divmod(tap, 5)
-            draw.rectangle([origin + col * cell, origin + row * cell,
-                            origin + (col + 1) * cell - 1,
-                            origin + (row + 1) * cell - 1], fill=QR_DARK)
-    image.save(dest)
+        [origin - pad, origin - pad, origin + span + pad, origin + span + pad],
+        radius=span // 6, fill=QR_LIGHT)
+
+    cell = span // 28
+    for row in range(28):
+        for col in range(28):
+            if sample[row, col] > 0.45:
+                draw.rectangle([origin + col * cell, origin + row * cell,
+                                origin + (col + 1) * cell - 1,
+                                origin + (row + 1) * cell - 1], fill=QR_DARK)
+    canvas.save(dest)
     return qr.version
 
 
