@@ -1,0 +1,112 @@
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body {
+    margin: 0;
+    padding: 18px 0;
+    background: #111;
+    color: #eee;
+    font: 16px system-ui;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  #pad { background: #000; touch-action: none }
+  #readout { display: flex; align-items: center; gap: 16px; height: 78px }
+  /* The 28x28 the network is actually given, shown at 66px so you can see
+     the pixels it works from. */
+  #seen { width: 66px; height: 66px; background: #000; image-rendering: pixelated }
+  #digit { font: 700 62px system-ui; width: 56px }
+  #hint { color: #666 }
+</style>
+
+<canvas id="pad" width="280" height="280"></canvas>
+<div id="readout">
+  <canvas id="seen" width="28" height="28"></canvas>
+  <div id="digit">?</div>
+</div>
+<div id="hint">draw a digit</div>
+
+<script>
+  /* INFER_JS is spliced in here at build time, then the whole script is
+     minified. MODEL_BASE64 becomes the packed weights. */
+  const model = unpackModel(MODEL_BASE64);
+  const ink = pad.getContext("2d");
+  const shrunk = seen.getContext("2d");
+  let drawing = false;
+
+  ink.lineWidth = 24;
+  ink.lineCap = ink.lineJoin = "round";
+  ink.strokeStyle = "#fff";
+
+  // The canvas is 280x280 internally but CSS may show it smaller, so pointer
+  // coordinates have to be scaled into canvas space.
+  function lineTo(event) {
+    const box = pad.getBoundingClientRect();
+    ink.lineTo(
+      (event.clientX - box.left) * 280 / box.width,
+      (event.clientY - box.top) * 280 / box.height
+    );
+  }
+
+  pad.onpointerdown = function (event) {
+    hint.textContent = "";
+    if (digit.textContent !== "?") {
+      ink.clearRect(0, 0, 280, 280);
+      seen.width = 28;                 // assigning width also clears the canvas
+      digit.textContent = "?";
+    }
+    drawing = true;
+    ink.beginPath();
+    lineTo(event);
+  };
+
+  pad.onpointermove = function (event) {
+    if (!drawing) return;
+    lineTo(event);
+    ink.stroke();
+  };
+
+  pad.onpointerup = function () {
+    if (!drawing) return;
+    drawing = false;
+    const pixels = readStrokeAs28x28();
+    if (pixels) digit.textContent = classify(pixels, model);
+  };
+
+  // MNIST normalises every digit into a 20x20 box centred in a 28x28 frame.
+  // Find the bounding box of the ink and let drawImage do that resample in one
+  // call — the browser's own resampler is better than anything worth hand-rolling.
+  function readStrokeAs28x28() {
+    const alpha = ink.getImageData(0, 0, 280, 280).data;
+    let left = 280, top = 280, right = -1, bottom = -1;
+
+    for (let i = 3; i < 313600; i += 4) {
+      if (!alpha[i]) continue;
+      const pixel = i / 4 | 0;
+      const x = pixel % 280;
+      const y = pixel / 280 | 0;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+    if (right < left) return null;     // nothing drawn
+
+    const width = right - left + 1;
+    const height = bottom - top + 1;
+    const scale = 20 / Math.max(width, height);
+
+    seen.width = 28;
+    shrunk.drawImage(
+      pad, left, top, width, height,
+      (28 - width * scale) / 2, (28 - height * scale) / 2,
+      width * scale, height * scale
+    );
+
+    const small = shrunk.getImageData(0, 0, 28, 28).data;
+    const pixels = new Float32Array(784);
+    for (let i = 0; i < 784; i++) pixels[i] = small[i * 4 + 3] / 255;
+    return pixels;
+  }
+</script>

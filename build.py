@@ -1,5 +1,5 @@
 """Pack the trained model into a QR code. 2953 bytes is the spec, not a target."""
-import base64, gzip, json, pathlib, re, sys
+import base64, gzip, json, pathlib, re, subprocess, sys
 import numpy as np
 import segno
 
@@ -59,34 +59,26 @@ def predict(images, blob):
 
 
 def page_html(blob):
-    """MNIST normalises each digit into a 20x20 box centred in 28x28. drawImage
-    does that resample natively, so the UI does no pixel arithmetic of its own."""
-    infer = re.sub(r"\s*\n\s*", "", re.sub(r"^\s*//.*$", "", (HERE / "infer.js").read_text(), flags=re.M))
-    return (
-        '<meta name=viewport content=width=device-width,initial-scale=1>'
-        '<body style="margin:0;background:#111;color:#eee;font:16px system-ui;text-align:center">'
-        '<canvas id=c width=280 height=280 style="background:#000;margin:14px;'
-        'touch-action:none"></canvas><canvas id=k width=28 height=28 hidden></canvas>'
-        '<div id=o style="font:700 64px system-ui;height:70px"></div>'
-        f'<script>{infer}'
-        f'var M=U("{blob}"),g=c.getContext("2d"),q=k.getContext("2d"),d=0;'
-        'g.lineWidth=24;g.lineCap=g.lineJoin="round";g.strokeStyle="#fff";'
-        'function m(e){var r=c.getBoundingClientRect();'
-        'g.lineTo((e.clientX-r.left)*280/r.width,(e.clientY-r.top)*280/r.height)}'
-        'c.onpointerdown=function(e){if(o.textContent){g.clearRect(0,0,280,280);o.textContent=""}'
-        'd=1;g.beginPath();m(e)};'
-        'c.onpointermove=function(e){if(d){m(e);g.stroke()}};'
-        'c.onpointerup=function(){if(!d)return;d=0;'
-        'var s=g.getImageData(0,0,280,280).data,a=280,b=280,u=0,w=0,i,X,Y,p=new Float32Array(784);'
-        'for(i=3;i<313600;i+=4)if(s[i]){X=i/4|0;Y=X/280|0;X%=280;'
-        'if(X<a)a=X;if(X>u)u=X;if(Y<b)b=Y;if(Y>w)w=Y}'
-        'if(u<a)return;'
-        'var W=u-a+1,H=w-b+1,z=20/(W>H?W:H);k.width=28;'
-        'q.drawImage(c,a,b,W,H,(28-W*z)/2,(28-H*z)/2,W*z,H*z);'
-        's=q.getImageData(0,0,28,28).data;'
-        'for(i=0;i<784;i++)p[i]=s[i*4+3]/255;'
-        'o.textContent=P(p,M)};'
-        '</script>')
+    """Assemble the page from `page.src.html` and `infer.js`.
+
+    The sources are written to be read; terser does the squeezing. Hand-minified
+    source would save nothing here and cost everything in review.
+    """
+    source = (HERE / "page.src.html").read_text()
+    script = re.search(r"<script>(.*)</script>", source, re.S).group(1)
+    combined = (HERE / "infer.js").read_text() + "\n" + script.replace(
+        "MODEL_BASE64", json.dumps(blob))
+
+    minified = subprocess.run(
+        ["npx", "--no-install", "terser", "--compress", "--mangle", "--toplevel"],
+        input=combined, capture_output=True, text=True, check=True,
+        cwd=HERE).stdout.strip()
+
+    markup = source[:source.index("<script>")]
+    markup = re.sub(r"/\*.*?\*/", "", markup, flags=re.S)        # CSS comments
+    markup = re.sub(r"\s*\n\s*", "", markup)                      # line breaks
+    markup = re.sub(r"\s*([{};:,])\s*", r"\1", markup)            # CSS padding
+    return markup + "<script>" + minified + "</script>"
 
 
 def build(model_path):
@@ -99,6 +91,8 @@ def build(model_path):
            + "').then(r=>new Response(r.body.pipeThrough(new DecompressionStream('gzip')))"
              ".text()).then(t=>document.write(t))</script>")
     size = len(uri.encode())
+
+    (HERE / "page.html").write_text(page)
 
     images, labels = model["xte"], model["yte"]
     preds = predict(images, raw)
@@ -133,7 +127,6 @@ def build(model_path):
 
     if size <= QR_MAX:
         (HERE / "payload.txt").write_text(uri)
-        (HERE / "page.html").write_text(page)
         json.dump({"blob": blob, "labels": labels.tolist(), "ref": preds.tolist(),
                    "px": base64.b64encode((images * 255).astype(np.uint8).tobytes()).decode()},
                   open(HERE / "testset.json", "w"))
