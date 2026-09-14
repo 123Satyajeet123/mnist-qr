@@ -66,10 +66,8 @@
     const stage = document.getElementById("stage");
     stage.srcdoc = payload;
 
-    // Read the weights out of the same bytes that are running, so this can
-    // never drift from the model in the frame. The payload is minified and its
-    // names are mangled, so find the blob by shape: it is the only long base64
-    // literal in there.
+    // Unpack the weights from the same bytes running in the frame. The payload
+    // is mangled, so find the blob by shape: the only long base64 literal.
     const model = unpackModel(payload.match(/"([A-Za-z0-9+/]{200,}={0,2})"/)[1]);
     drawFilters(model);
     drawBars(new Float32Array(10), -1);
@@ -85,8 +83,8 @@
     return new Response(stream).text();
   }
 
-  // The payload owns the drawing surface. Watch its 28x28 input and score the
-  // same pixels here, rather than asking the payload to report anything back.
+  // The payload owns the drawing surface. Score its 28x28 input here rather
+  // than asking the payload to report anything back.
   function watch(frame, model) {
     const seen = frame.document.getElementById("seen");
     frame.document.getElementById("pad").addEventListener("pointerup", () => {

@@ -28,8 +28,7 @@
 <div id="hint">draw a digit</div>
 
 <script>
-  /* INFER_JS is spliced in here at build time, then the whole script is
-     minified. MODEL_BASE64 becomes the packed weights. */
+  /* INFER_JS and MODEL_BASE64 are filled in by build.py, then terser runs. */
   const model = unpackModel(MODEL_BASE64);
   const ink = pad.getContext("2d");
   const shrunk = seen.getContext("2d");
@@ -76,9 +75,8 @@
     digit.textContent = scores.indexOf(Math.max(...scores));
   };
 
-  // MNIST normalises every digit into a 20x20 box centred in a 28x28 frame.
-  // Find the bounding box of the ink and let drawImage do that resample in one
-  // call — the browser's own resampler is better than anything worth hand-rolling.
+  // MNIST normalises every digit into a 20x20 box centred in 28x28. Find the
+  // bounding box of the ink and let drawImage do that resample in one call.
   function readStrokeAs28x28() {
     const alpha = ink.getImageData(0, 0, 280, 280).data;
     let left = 280, top = 280, right = -1, bottom = -1;

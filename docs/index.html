@@ -50,11 +50,10 @@
 </div>
 
 <script>
-  // The model and the classifier. Shared by the QR payload and by verify.mjs, so
-// the demo and its test can never drift apart.
+  // The model and the classifier. Spliced into the QR payload, the viewer and
+// verify.mjs, so the three cannot drift.
 //
-// This file is written to be read. It gets minified and mangled by terser at
-// build time, so names here cost nothing in the final payload.
+// Names are long because terser mangles them at build time.
 
 // Unpack the model from the bytes the QR code carries.
 //
@@ -87,8 +86,7 @@ function unpackModel(base64) {
   const channelShift = dequantise(14 + filters, filters, header.getFloat32(6, true));
   const classBias = dequantise(14 + 2 * filters, 10, header.getFloat32(10, true));
 
-  // Every weight is one bit, meaning +1 or -1. That is the whole reason the
-  // model fits: 627 bytes holds just over 5,000 of them.
+  // Every weight is one bit, meaning +1 or -1.
   let bit = (14 + 2 * filters + 10) * 8;
   function readSigns(count) {
     const out = new Int8Array(count);
@@ -110,11 +108,9 @@ function unpackModel(base64) {
 }
 
 // Score one image against all ten digits. `pixels` is a Float32Array of 784
-// values in 0..1, row-major 28x28. Returns the ten logits; the caller picks the
-// argmax. Returning scores rather than a single digit lets the page show how
-// confident the network was, which is most of what makes it legible.
+// values in 0..1, row-major 28x28. The caller picks the argmax.
 //
-// The network is: 5x5 convolution -> BatchNorm -> ReLU -> max-pool -> dense.
+// 5x5 convolution -> BatchNorm -> ReLU -> max-pool -> dense.
 function scoreDigits(pixels, model) {
   const { filters, grid, convWeights, denseWeights } = model;
   const poolSize = 24 / grid;
@@ -129,16 +125,14 @@ function scoreDigits(pixels, model) {
           const pixel = (y + (tap / 5 | 0)) * 28 + x + tap % 5;
           sum += pixels[pixel] * convWeights[tap * filters + f];
         }
-        // BatchNorm was folded into one scale and shift per channel at export,
-        // so inference is a multiply, an add, and a ReLU.
+        // BatchNorm was folded into one scale and shift per channel at export.
         const value = model.channelScale[f] * sum + model.channelShift[f];
         activations[(y * 24 + x) * filters + f] = value > 0 ? value : 0;
       }
     }
   }
 
-  // Max-pool and accumulate the dense layer in the same pass, so the pooled
-  // feature map never has to be written out.
+  // Max-pool and accumulate the dense layer in one pass.
   const logits = Float32Array.from(model.classBias);
   for (let row = 0; row < grid; row++) {
     for (let col = 0; col < grid; col++) {
@@ -175,10 +169,8 @@ function scoreDigits(pixels, model) {
     const stage = document.getElementById("stage");
     stage.srcdoc = payload;
 
-    // Read the weights out of the same bytes that are running, so this can
-    // never drift from the model in the frame. The payload is minified and its
-    // names are mangled, so find the blob by shape: it is the only long base64
-    // literal in there.
+    // Unpack the weights from the same bytes running in the frame. The payload
+    // is mangled, so find the blob by shape: the only long base64 literal.
     const model = unpackModel(payload.match(/"([A-Za-z0-9+/]{200,}={0,2})"/)[1]);
     drawFilters(model);
     drawBars(new Float32Array(10), -1);
@@ -194,8 +186,8 @@ function scoreDigits(pixels, model) {
     return new Response(stream).text();
   }
 
-  // The payload owns the drawing surface. Watch its 28x28 input and score the
-  // same pixels here, rather than asking the payload to report anything back.
+  // The payload owns the drawing surface. Score its 28x28 input here rather
+  // than asking the payload to report anything back.
   function watch(frame, model) {
     const seen = frame.document.getElementById("seen");
     frame.document.getElementById("pad").addEventListener("pointerup", () => {

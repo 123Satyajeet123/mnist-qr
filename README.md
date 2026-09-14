@@ -1,52 +1,54 @@
 # MNIST in a QR code
 
-A handwritten-digit classifier — weights, inference and interface — inside one
-QR code. Scan it, draw a digit, it answers. Nothing is fetched.
+A handwritten-digit classifier inside one QR code. Scan it, draw a digit, it answers.
 
 ![the classifier](mnist_qr_styled.png)
 
-**[Try it →](https://123satyajeet123.github.io/mnist-qr/demo.html)**
+**[Try it](https://123satyajeet123.github.io/mnist-qr/demo.html)**
 
-**96.37%** on the full MNIST test set · **627 B** of weights, one bit each ·
-**2,948 / 2,953 bytes** — version 40 is the last in the QR spec, so that is the
-ceiling, not a target.
+96.37% on the MNIST test set · 627 B of weights, one bit each · 2,948 of 2,953 bytes
 
 ## How
 
 ```
 https://123satyajeet123.github.io/mnist-qr/#H4sIAAAAAAAC_41Xa…
 └───────────────── 44 B ─────────────────┘└────── 2,904 B ──────┘
-                                           gzip(page), base64url
+                                    gzip(markup + classifier + weights)
 ```
 
-URL fragments are never sent to a server, so the model travels in the code you
-scanned. The page inflates it and runs it, and holds no model of its own.
+Fragments are never sent to a server. The page inflates one and runs it.
 
-A pure `data:` URI would need no page at all, but Chrome blocks top-frame
-`data:` navigation, so it would be Safari-only.
+Chrome blocks top-frame `data:` URIs, so a version with no page at all would be
+Safari only.
 
-## Architecture
+## Network
 
 ```
 28×28 ──conv 5×5 ×24──> 24×24 ──ReLU──> ──maxpool 6×6──> 4×4 ──dense──> 10
            600 bits                                          3,840 bits
 ```
 
-Every weight is one bit, +1 or −1. Plus 72 B of per-channel scales, shifts and
-biases = 627 B.
+627 B = 4,440 one-bit weights + 72 B of per-channel scales, shifts and biases.
 
-The dense layer costs `grid² × filters × 10` bits, so pooling harder is what
-buys filters. That is why the pool is 6×6 and not 2×2.
+The dense layer costs `grid² × filters × 10` bits, so pooling harder buys filters.
 
 ## Build
+
+```
+train.py ─> model.npz ─> build.py ─┬─> mnist_qr.png       the code
+                                   ├─> docs/index.html    the page it opens
+                                   └─> testset.json       what verify.mjs checks
+```
+
+`infer.js` is spliced into the payload, the page and the test, so they cannot drift.
 
 ```sh
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install segno
 npm install
 
 .venv/bin/python train.py mnist_data 24 6 model.npz   # downloads MNIST, ~15 min
-.venv/bin/python build.py model.npz                   # writes docs/ and the QR
-node verify.mjs                                       # gate: JS must match numpy
+.venv/bin/python build.py model.npz
+node verify.mjs                                       # JS must match numpy
 ```
 
 ## Files
@@ -54,8 +56,6 @@ node verify.mjs                                       # gate: JS must match nump
 | | |
 |---|---|
 | `train.py` | binary-weight CNN, explicit gradients, numpy only |
-| `infer.js` | unpack + score, spliced into the payload, the viewer and the test |
-| `page.src.html` | what the QR carries; terser minifies it at build time |
+| `page.src.html` | what the QR carries, before terser |
 | `viewer.src.html` | the page it lands on |
 | `build.py` | packs the bits, assembles both pages, emits the QR |
-| `verify.mjs` | the gate: JS predictions must match numpy on 300 images |

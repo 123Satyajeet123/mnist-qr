@@ -35,7 +35,7 @@ def pack(model):
 
 
 def unpack(blob):
-    """numpy mirror of U() in infer.js — proves the bytes decode to what we packed."""
+    """numpy mirror of unpackModel() in infer.js."""
     b = np.frombuffer(blob, np.uint8)
     F, G = int(b[0]), int(b[1])
     ks, kh, kt = np.frombuffer(blob[2:14], "<f4")
@@ -50,7 +50,7 @@ def unpack(blob):
 
 
 def predict(images, blob):
-    """numpy mirror of P() — the accuracy this reports is what the QR will do."""
+    """numpy mirror of scoreDigits(). This accuracy is what the QR will do."""
     from numpy.lib.stride_tricks import sliding_window_view
     F, G, sc, sh, t2, w1, w2 = unpack(blob)
     S = CONV_OUT // G
@@ -101,15 +101,11 @@ def viewer_html(blob, model):
 
 
 def styled_qr(url, model, dest, digit=3, share=0.045):
-    """A QR in the project's colours with a real MNIST digit in the middle.
+    """A QR in the project's colours with an MNIST digit in the middle.
 
-    The art budget is the error-correction budget and nothing more. Measured on
-    this payload (version 40-L): a 7% centre hole still decodes, 8% does not.
-    Image-style QR art needs level H, which holds 1,273 bytes at version 40 —
-    less than half of what is in here, so it is not an option at any setting.
-
-    The mark is a test-set digit rather than a convolution kernel: a 5x5 binary
-    kernel is honest but reads as a random box, which helps nobody.
+    The mark can cover at most 7% of the symbol: that is level L's recovery
+    budget, measured here (7% decodes, 8% does not). Image-style QR art needs
+    level H, which holds 1,273 bytes at version 40.
     """
     from PIL import Image, ImageDraw
 
