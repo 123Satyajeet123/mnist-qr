@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MNIST in a QR code</title>
+<style>html,body{margin:0;height:100%;background:#111;color:#eee;font:16px system-ui;display:grid;place-items:center;text-align:center}</style>
+<div id="m">Scan the QR code to load the classifier.</div>
+<script>
+// The classifier arrives in the URL fragment, which browsers never send to the
+// server. This file is the whole server side: it inflates and runs what the
+// scanner already carried. It never sees, stores, or transmits anything.
+(async () => {
+  const frag = location.hash.slice(1);
+  if (!frag) return;
+  const pad = frag + "=".repeat((4 - frag.length % 4) % 4);
+  const bin = atob(pad.replace(/-/g, "+").replace(/_/g, "/"));
+  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  document.open();
+  document.write(await new Response(stream).text());
+  document.close();
+})();
+</script>
