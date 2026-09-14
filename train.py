@@ -191,4 +191,5 @@ if __name__ == "__main__":
     print(f"best test accuracy {acc:.4f}")
     out = sys.argv[4] if len(sys.argv) > 4 else "model.npz"
     np.savez(out, w1s=w1s, w2s=w2s, scale=scale, shift=shift, a2=a2, t2=t2,
-             acc=acc, filters=filters, pool=POOL, xte=xte[:300], yte=yte[:300])
+             acc=acc, filters=filters, pool=POOL, xte=xte[:300], yte=yte[:300],
+             full_n=len(yte))

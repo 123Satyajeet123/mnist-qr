@@ -81,35 +81,19 @@ def page_html(blob):
     return markup + "<script>" + minified + "</script>"
 
 
-def viewer_html(blob, model, payload_bytes):
+def viewer_html(blob, model):
     """The hosted page that wraps the scanned payload.
 
-    It is served, not scanned, so it costs the QR nothing. It unpacks the same
-    weights from the same bytes and renders them, rather than keeping a second
-    copy of the model in step by hand.
+    It is served rather than scanned, so it costs the QR nothing. It unpacks the
+    same weights from the same bytes, so it cannot drift from what is running.
     """
     source = (HERE / "viewer.src.html").read_text()
-    weights = len(pack(model))
-    code = payload_bytes - weights
-    facts = {
-        "INFER_JS": (HERE / "infer.js").read_text(),
-        "FILTER_COUNT": str(int(model["filters"])),
-        "GRID": str(CONV_OUT // int(model["pool"])),
-        "ACCURACY": f"{float(model['full_acc']) * 100:.2f}" if "full_acc" in model else "96.37",
-        "WEIGHT_BYTES": f"{weights:,}",
-        "CODE_BYTES": f"{code:,}",
-        "SPARE_BYTES": str(QR_MAX - payload_bytes),
-        "PAYLOAD_BYTES": f"{payload_bytes:,}",
-        "QR_MAX": f"{QR_MAX:,}",
-        "WEIGHT_PCT": f"{weights / QR_MAX * 100:.1f}",
-        "CODE_PCT": f"{code / QR_MAX * 100:.1f}",
-    }
-    # The splice point is a comment in the source, so the source stays valid
-    # JS on its own and can be linted or opened directly.
-    source = re.sub(r"/\* INFER_JS is spliced.*?\*/", lambda _: facts.pop("INFER_JS"),
+    # The splice point is a comment, so the source stays valid on its own.
+    source = re.sub(r"/\* INFER_JS is spliced.*?\*/",
+                    lambda _: (HERE / "infer.js").read_text(),
                     source, count=1, flags=re.S)
-    for key, value in facts.items():
-        source = source.replace(key, value)
+    source = source.replace("WEIGHT_BYTES", str(len(pack(model))))
+    source = source.replace("ACCURACY", f"{float(model['full_acc']) * 100:.2f}")
     return source
 
 
@@ -154,7 +138,7 @@ def build(model_path):
     docs = HERE / "docs"
     docs.mkdir(exist_ok=True)
     (HERE / "payload_url.txt").write_text(url)
-    (docs / "index.html").write_text(viewer_html(blob, model, size))
+    (docs / "index.html").write_text(viewer_html(blob, model))
     # A clickable equivalent of scanning, for anyone without a camera to hand.
     (docs / "demo.html").write_text(
         '<!doctype html><meta charset=utf-8><title>MNIST in a QR code</title>'

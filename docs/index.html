@@ -2,140 +2,50 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MNIST in a QR code</title>
 <style>
-  :root {
-    --bg: #0d0f11;
-    --panel: #15181b;
-    --line: #24292e;
-    --ink: #e9edf0;
-    --dim: #7c878f;
-    --live: #4ec9a5;
-  }
+  :root { --bg: #0d0f11; --ink: #e9edf0; --dim: #6b757c; --live: #4ec9a5 }
   * { box-sizing: border-box }
   body {
     margin: 0;
-    padding: 28px 18px 64px;
+    padding: 20px 16px 48px;
     background: var(--bg);
     color: var(--ink);
-    font: 15px/1.55 ui-sans-serif, system-ui, sans-serif;
+    font: 14px/1.5 ui-sans-serif, system-ui, sans-serif;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 26px;
+    gap: 22px;
   }
-  .col { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 26px }
+  .col { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 22px }
 
-  h1 { font-size: 21px; font-weight: 600; margin: 0; letter-spacing: -0.01em }
-  .sub { color: var(--dim); font-size: 14px; margin: 5px 0 0 }
-  .label {
-    font: 600 11px/1 ui-monospace, monospace;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
-    color: var(--dim);
-    margin-bottom: 10px;
-  }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px }
+  #stage { width: 100%; height: 400px; border: 0; display: block }
 
-  /* The demo itself, rendered from the QR bytes and nothing else. */
-  #stage { width: 100%; border: 0; display: block; height: 420px; border-radius: 12px }
-  .fromqr { border: 1px solid var(--live); border-radius: 14px; padding: 3px; position: relative }
-  .fromqr .tag {
-    position: absolute; top: -9px; left: 14px; background: var(--bg); color: var(--live);
-    font: 600 10px/1 ui-monospace, monospace; letter-spacing: 0.1em; padding: 0 7px;
-  }
+  /* Ten scores, one row each. The digits label themselves. */
+  #bars { display: grid; grid-template-columns: 12px 1fr; gap: 4px 9px; align-items: center }
+  #bars b { font: 500 11px ui-monospace, monospace; color: var(--dim); text-align: right }
+  #bars div { height: 7px; background: #1b1f22; border-radius: 4px; overflow: hidden }
+  #bars i { display: block; height: 100%; background: #333a3f; border-radius: 4px; transition: width .15s }
 
-  /* Per-digit scores. */
-  .bars { display: grid; grid-template-columns: 14px 1fr; gap: 5px 10px; align-items: center }
-  .bars b { font: 500 12px ui-monospace, monospace; color: var(--dim); text-align: right }
-  .track { height: 9px; background: #1f2428; border-radius: 5px; overflow: hidden }
-  .track i { display: block; height: 100%; background: #3a4247; border-radius: 5px; transition: width .18s }
-  .bars .win b { color: var(--live) }
-  .bars .win i { background: var(--live) }
+  /* The kernels, as they are. */
+  #filters { margin-top: 6px; display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px }
+  #filters canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 2px }
 
-  /* The 24 convolution kernels, drawn from the actual bits in the code. */
-  #filters { display: grid; grid-template-columns: repeat(8, 1fr); gap: 7px }
-  #filters canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 3px }
-
-  .budget { height: 10px; display: flex; border-radius: 5px; overflow: hidden; background: #1f2428 }
-  .budget span { display: block; height: 100% }
-  .keys { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 9px; font-size: 12px; color: var(--dim) }
-  .keys i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px }
-
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px }
-  td { padding: 7px 0; border-bottom: 1px solid var(--line) }
-  td:last-child { text-align: right; font-family: ui-monospace, monospace; color: var(--dim) }
-  tr:last-child td { border-bottom: 0 }
-  .flow { font: 12px/1.9 ui-monospace, monospace; color: var(--dim) }
-  .flow b { color: var(--ink); font-weight: 500 }
-  a { color: var(--live) }
-  #fallback { color: var(--dim); text-align: center }
+  footer { color: var(--dim); font-size: 12.5px; text-align: center }
+  a { color: var(--dim) }
+  #fallback { color: var(--dim); text-align: center; padding: 40px 0 }
 </style>
 
 <div class="col">
-  <header>
-    <h1>MNIST in a QR code</h1>
-    <p class="sub">The weights, the classifier and its interface all travel inside the
-      code you scanned. This page around them is a viewer — it holds no model.</p>
-  </header>
-
-  <div id="fallback">Scan the QR code, or <a href="./demo.html">open the demo</a>.</div>
+  <div id="fallback">Scan the code, or <a href="./demo.html">open the demo</a>.</div>
 
   <div id="app" hidden>
-    <div class="fromqr">
-      <span class="tag">FROM THE QR CODE</span>
-      <iframe id="stage" title="digit classifier"></iframe>
-    </div>
-
-    <div style="margin-top:26px">
-      <div class="label">What the network scored</div>
-      <div class="panel"><div class="bars" id="bars"></div></div>
-    </div>
-
-    <div style="margin-top:26px">
-      <div class="label">The network itself &mdash; 24 5&times;5 kernels</div>
-      <div class="panel">
-        <div id="filters"></div>
-        <p class="sub" style="margin-top:12px">Every weight is one bit: white is +1, dark is
-          &minus;1. These came out of the scanned bytes, not from this page.</p>
-      </div>
-    </div>
-
-    <div style="margin-top:26px">
-      <div class="label">Where the 2,948 bytes went</div>
-      <div class="panel">
-        <div class="budget">
-          <span style="width:21.2%;background:var(--live)"></span>
-          <span style="width:78.6%;background:#3a4247"></span>
-        </div>
-        <div class="keys">
-          <span><i style="background:var(--live)"></i>weights 627 B</span>
-          <span><i style="background:#3a4247"></i>code + interface 2,321 B</span>
-          <span><i style="background:#1f2428"></i>spare 5 B</span>
-        </div>
-      </div>
-    </div>
-
-    <div style="margin-top:26px">
-      <div class="label">Numbers</div>
-      <div class="panel">
-        <table>
-          <tr><td>Accuracy, all 10,000 test images</td><td>96.37%</td></tr>
-          <tr><td>Weights</td><td>627 B, 1 bit each</td></tr>
-          <tr><td>QR payload</td><td>2,948 / 2,953 B</td></tr>
-          <tr><td>Sent to the server when you scan</td><td>nothing</td></tr>
-        </table>
-        <p class="flow" style="margin:14px 0 0">
-          <b>280&times;280</b> drawing &rarr; crop to ink &rarr; <b>28&times;28</b> &rarr;
-          <b>24</b> conv 5&times;5 &rarr; ReLU &rarr; pool to
-          <b>4&times;4</b> &rarr; dense &rarr; <b>10</b> scores
-        </p>
-      </div>
-    </div>
-
-    <p class="sub" style="text-align:center">
-      Everything after the <code>#</code> in the address bar is the program.
-      Fragments are never sent to a server.
-      <a href="https://github.com/123Satyajeet123/mnist-qr">Source</a>
-    </p>
+    <iframe id="stage" title="digit classifier"></iframe>
+    <div id="bars"></div>
+    <div id="filters"></div>
+    <footer>
+      627 B of weights, one bit each &middot; 96.37% on 10,000 digits &middot;
+      all of it in the URL &middot;
+      <a href="https://github.com/123Satyajeet123/mnist-qr">source</a>
+    </footer>
   </div>
 </div>
 
@@ -259,19 +169,17 @@ function scoreDigits(pixels, model) {
     if (!fragment) return;
 
     const payload = await inflate(fragment);
-    document.getElementById("fallback").hidden = true;
-    document.getElementById("app").hidden = false;
+    fallback.hidden = true;
+    app.hidden = false;
 
-    // Run the scanned bytes untouched, in their own document.
     const stage = document.getElementById("stage");
     stage.srcdoc = payload;
 
-    // Read the weights out of the same bytes, so the visualisation below is the
-    // model that is actually running and not a copy kept in step by hand.
-    // The payload is minified and its function names are mangled, so find the
-    // blob by shape: it is the only long base64 literal in there.
-    const blob = payload.match(/"([A-Za-z0-9+/]{200,}={0,2})"/)[1];
-    const model = unpackModel(blob);
+    // Read the weights out of the same bytes that are running, so this can
+    // never drift from the model in the frame. The payload is minified and its
+    // names are mangled, so find the blob by shape: it is the only long base64
+    // literal in there.
+    const model = unpackModel(payload.match(/"([A-Za-z0-9+/]{200,}={0,2})"/)[1]);
     drawFilters(model);
     drawBars(new Float32Array(10), -1);
 
@@ -295,7 +203,7 @@ function scoreDigits(pixels, model) {
         const image = seen.getContext("2d").getImageData(0, 0, 28, 28).data;
         const pixels = new Float32Array(784);
         for (let i = 0; i < 784; i++) pixels[i] = image[i * 4 + 3] / 255;
-        if (!pixels.some(v => v > 0)) return;
+        if (!pixels.some(value => value > 0)) return;
         const scores = scoreDigits(pixels, model);
         drawBars(scores, scores.indexOf(Math.max(...scores)));
       }, 0);
@@ -305,40 +213,36 @@ function scoreDigits(pixels, model) {
   function drawBars(scores, winner) {
     const low = Math.min(...scores);
     const span = Math.max(...scores) - low || 1;
-    const host = document.getElementById("bars");
-    host.innerHTML = "";
+    bars.innerHTML = "";
     scores.forEach((score, digit) => {
-      const name = document.createElement("b");
-      name.textContent = digit;
+      const label = document.createElement("b");
+      label.textContent = digit;
       const track = document.createElement("div");
-      track.className = "track";
       const fill = document.createElement("i");
       fill.style.width = winner < 0 ? "0%" : Math.max(2, ((score - low) / span) * 100) + "%";
       if (digit === winner) {
-        name.style.color = "var(--live)";
+        label.style.color = "var(--live)";
         fill.style.background = "var(--live)";
       }
       track.appendChild(fill);
-      host.append(name, track);
+      bars.append(label, track);
     });
   }
 
   // One bit per weight: white for +1, dark for -1.
   function drawFilters(model) {
-    const host = document.getElementById("filters");
-    host.innerHTML = "";
+    filters.innerHTML = "";
     for (let f = 0; f < model.filters; f++) {
       const cell = document.createElement("canvas");
       cell.width = cell.height = 5;
-      const ctx = cell.getContext("2d");
-      const image = ctx.createImageData(5, 5);
+      const context = cell.getContext("2d");
+      const image = context.createImageData(5, 5);
       for (let tap = 0; tap < 25; tap++) {
-        const on = model.convWeights[tap * model.filters + f] > 0;
-        const level = on ? 233 : 38;
-        image.data.set([level, level + (on ? 4 : 3), level + (on ? 8 : 5), 255], tap * 4);
+        const level = model.convWeights[tap * model.filters + f] > 0 ? 226 : 32;
+        image.data.set([level, level, level, 255], tap * 4);
       }
-      ctx.putImageData(image, 0, 0);
-      host.appendChild(cell);
+      context.putImageData(image, 0, 0);
+      filters.appendChild(cell);
     }
   }
 </script>
