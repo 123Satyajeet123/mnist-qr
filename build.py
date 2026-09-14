@@ -81,59 +81,89 @@ def page_html(blob):
     return markup + "<script>" + minified + "</script>"
 
 
+def viewer_html(blob, model, payload_bytes):
+    """The hosted page that wraps the scanned payload.
+
+    It is served, not scanned, so it costs the QR nothing. It unpacks the same
+    weights from the same bytes and renders them, rather than keeping a second
+    copy of the model in step by hand.
+    """
+    source = (HERE / "viewer.src.html").read_text()
+    weights = len(pack(model))
+    code = payload_bytes - weights
+    facts = {
+        "INFER_JS": (HERE / "infer.js").read_text(),
+        "FILTER_COUNT": str(int(model["filters"])),
+        "GRID": str(CONV_OUT // int(model["pool"])),
+        "ACCURACY": f"{float(model['full_acc']) * 100:.2f}" if "full_acc" in model else "96.37",
+        "WEIGHT_BYTES": f"{weights:,}",
+        "CODE_BYTES": f"{code:,}",
+        "SPARE_BYTES": str(QR_MAX - payload_bytes),
+        "PAYLOAD_BYTES": f"{payload_bytes:,}",
+        "QR_MAX": f"{QR_MAX:,}",
+        "WEIGHT_PCT": f"{weights / QR_MAX * 100:.1f}",
+        "CODE_PCT": f"{code / QR_MAX * 100:.1f}",
+    }
+    # The splice point is a comment in the source, so the source stays valid
+    # JS on its own and can be linted or opened directly.
+    source = re.sub(r"/\* INFER_JS is spliced.*?\*/", lambda _: facts.pop("INFER_JS"),
+                    source, count=1, flags=re.S)
+    for key, value in facts.items():
+        source = source.replace(key, value)
+    return source
+
+
 def build(model_path):
     model = np.load(model_path)
     raw = pack(model)
     blob = base64.b64encode(raw).decode()
     page = page_html(blob)
-    gz = gzip.compress(page.encode(), 9, mtime=0)
-    uri = ("data:text/html,<script>fetch('data:;base64," + base64.b64encode(gz).decode()
-           + "').then(r=>new Response(r.body.pipeThrough(new DecompressionStream('gzip')))"
-             ".text()).then(t=>document.write(t))</script>")
-    size = len(uri.encode())
+    compressed = gzip.compress(page.encode(), 9, mtime=0)
 
-    (HERE / "page.html").write_text(page)
+    # The QR carries a URL whose fragment is the entire program. Fragments are
+    # never sent to a server, so the model still travels inside the code; the
+    # page it lands on only inflates what the scanner already had. base64url
+    # keeps every character legal in a URL.
+    fragment = base64.urlsafe_b64encode(compressed).decode().rstrip("=")
+    url = PAGE_URL + fragment
+    size = len(url.encode())
 
     images, labels = model["xte"], model["yte"]
     preds = predict(images, raw)
-    acc = float((preds == labels).mean())
+    packed_acc = float((preds == labels).mean())
+    code_only = len(gzip.compress(page.replace(blob, "").encode(), 9))
 
-    code_gz = len(gzip.compress(page.replace(blob, "").encode(), 9))
     print(f"{model_path}: F={int(model['filters'])} pool={int(model['pool'])}")
-    print(f"  weights {len(raw):>5} B   code(gzip) {code_gz:>5} B   page(gzip) {len(gz):>5} B")
+    print(f"  weights {len(raw):>5} B   code(gzip) {code_only:>5} B   "
+          f"page(gzip) {len(compressed):>5} B")
     print(f"  QR payload {size:>5} / {QR_MAX} B   "
           f"{'FITS +' + str(QR_MAX - size) if size <= QR_MAX else 'OVER by ' + str(size - QR_MAX)}")
-    print(f"  float acc {float(model['acc']):.4f}  ->  packed acc {acc:.4f} (n={len(labels)})")
+    print(f"  float acc {float(model['acc']):.4f}  ->  packed acc {packed_acc:.4f} "
+          f"(n={len(labels)})")
 
-    # Universal variant: same gzip stream, carried in a fragment instead.
-    # base64url so no character in the payload is reserved in a URL.
-    frag = base64.urlsafe_b64encode(gz).decode().rstrip("=")
-    url = PAGE_URL + frag
-    url_size = len(url.encode())
-    print(f"  universal  {url_size:>5} / {QR_MAX} B   "
-          f"{'FITS +' + str(QR_MAX - url_size) if url_size <= QR_MAX else 'OVER by ' + str(url_size - QR_MAX)}"
-          f"   (works in every browser)")
-    if url_size <= QR_MAX:
-        (HERE / "payload_url.txt").write_text(url)
-        # A clickable equivalent of scanning, for people without a camera handy.
-        docs = HERE / "docs"
-        docs.mkdir(exist_ok=True)
-        (docs / "demo.html").write_text(
-            '<!doctype html><meta charset=utf-8><title>MNIST in a QR code</title>'
-            f'<script>location.replace("./#" + {frag!r})</script>'.replace("'", '"', 2))
-        qr_url = segno.make(url, error="l", mode="byte")
-        qr_url.save(HERE / "mnist_qr_universal.png", scale=16, border=4)
-        print(f"  QR version {qr_url.version}-L  ->  mnist_qr_universal.png")
+    # Written unconditionally: page.html is for reading, testset.json is what
+    # verify.mjs checks against. Neither should depend on whether the QR fits.
+    (HERE / "page.html").write_text(page)
+    json.dump({"blob": blob, "labels": labels.tolist(), "ref": preds.tolist(),
+               "px": base64.b64encode((images * 255).astype(np.uint8).tobytes()).decode()},
+              open(HERE / "testset.json", "w"))
 
-    if size <= QR_MAX:
-        (HERE / "payload.txt").write_text(uri)
-        json.dump({"blob": blob, "labels": labels.tolist(), "ref": preds.tolist(),
-                   "px": base64.b64encode((images * 255).astype(np.uint8).tobytes()).decode()},
-                  open(HERE / "testset.json", "w"))
-        qr = segno.make(uri, error="l", mode="byte")
-        qr.save(HERE / "mnist_qr.png", scale=16, border=4)  # 177 modules needs the pixels
-        print(f"  QR version {qr.version}-L  ->  mnist_qr.png")
-    return size <= QR_MAX
+    if size > QR_MAX:
+        return False
+
+    docs = HERE / "docs"
+    docs.mkdir(exist_ok=True)
+    (HERE / "payload_url.txt").write_text(url)
+    (docs / "index.html").write_text(viewer_html(blob, model, size))
+    # A clickable equivalent of scanning, for anyone without a camera to hand.
+    (docs / "demo.html").write_text(
+        '<!doctype html><meta charset=utf-8><title>MNIST in a QR code</title>'
+        f'<script>location.replace("./#" + "{fragment}")</script>')
+
+    qr = segno.make(url, error="l", mode="byte")
+    qr.save(HERE / "mnist_qr.png", scale=16, border=4)
+    print(f"  QR version {qr.version}-L  ->  mnist_qr.png")
+    return True
 
 
 if __name__ == "__main__":

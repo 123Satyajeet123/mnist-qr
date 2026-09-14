@@ -3,9 +3,9 @@
 import { readFileSync } from "node:fs";
 
 const { blob, labels, ref, px } = JSON.parse(readFileSync("testset.json", "utf8"));
-const { unpackModel, classify } = new Function(
+const { unpackModel, scoreDigits } = new Function(
   "atob",
-  readFileSync("infer.js", "utf8") + ";return{unpackModel,classify}"
+  readFileSync("infer.js", "utf8") + ";return{unpackModel,scoreDigits}"
 )(s => Buffer.from(s, "base64").toString("binary"));
 
 const bytes = Buffer.from(px, "base64");
@@ -15,7 +15,8 @@ const wrong = [];
 for (let i = 0; i < labels.length; i++) {
   const image = new Float32Array(784);
   for (let j = 0; j < 784; j++) image[j] = bytes[i * 784 + j] / 255;
-  const got = classify(image, model);
+  const scores = scoreDigits(image, model);
+  const got = scores.indexOf(Math.max(...scores));
   if (got === ref[i]) agree++; else wrong.push(`#${i} js=${got} numpy=${ref[i]}`);
   if (got === labels[i]) correct++;
 }

@@ -71,7 +71,9 @@
     if (!drawing) return;
     drawing = false;
     const pixels = readStrokeAs28x28();
-    if (pixels) digit.textContent = classify(pixels, model);
+    if (!pixels) return;
+    const scores = scoreDigits(pixels, model);
+    digit.textContent = scores.indexOf(Math.max(...scores));
   };
 
   // MNIST normalises every digit into a 20x20 box centred in a 28x28 frame.

@@ -1,106 +1,94 @@
 # MNIST in a QR code
 
-A handwritten-digit classifier — weights, inference and drawing UI — that fits
-entirely inside **one QR code**. Scan it and a working neural net opens in your
-browser. Nothing is fetched, nothing is hosted, there is no server.
+A handwritten-digit classifier — the weights, the inference code and its
+interface — that fits inside **one QR code**. Scan it, draw a digit, it tells
+you what you drew. Nothing is fetched. No model is stored on any server.
 
-![the classifier](mnist_qr_universal.png)
+![the classifier](mnist_qr.png)
 
 **[Open it without a camera →](https://123satyajeet123.github.io/mnist-qr/demo.html)**
 
-## Numbers
-
 | | |
 |---|---|
-| Test accuracy (full 10,000 images) | **96.37%** |
-| Model weights | **627 bytes** |
-| Total QR payload | **2,911 / 2,953 bytes** (QR v40-L byte mode, 42 spare) |
-| Architecture | 5×5 conv, 24 filters → BatchNorm+ReLU → 6×6 maxpool → FC-10 |
-| Weight precision | **1 bit** (±1). Per-channel scale/shift are int8. |
+| Accuracy, full 10,000-image test set | **96.37%** |
+| Model weights | **627 bytes**, one bit each |
+| QR payload | **2,948 / 2,953 bytes** (v40-L byte mode) |
+| Architecture | 5×5 conv ×24 → BatchNorm → ReLU → 4×4 max-pool → dense-10 |
 
-The 2,953-byte ceiling is the QR spec, not a design choice, and it picked the
-architecture: the fully-connected layer costs `grid² × filters × 10` bits, so
+The 2,953-byte ceiling is the QR specification, not a design target, and it
+picked the architecture: the dense layer costs `grid² × filters × 10` bits, so
 pooling harder is what buys filters.
+
+## How it works
+
+The QR contains a single URL. Everything after the `#` is the program:
+
+```
+https://123satyajeet123.github.io/mnist-qr/#H4sIAAAAAAAC_41Xa…
+└──────────────── 44 bytes ─────────────────┘└─ 2,904 bytes ─┘
+```
+
+- **The fragment is never sent to the server.** That is the HTTP specification,
+  not a convention — so the model travels in the code you scanned and nowhere else.
+- It is `base64url(gzip(entire page))`: markup, CSS, the classifier, and the
+  627 bytes of weights.
+- The page it lands on inflates that with `DecompressionStream` and runs it in
+  an iframe. The page holds no model of its own.
+
+Inference runs on your device, in JavaScript, offline once loaded.
+
+Chrome blocks top-frame `data:` URI navigation outright — including URIs typed
+into the omnibox — so a payload with no host at all would be Safari-only. The
+fragment carries the same bytes and works in every browser.
+
+## The viewer
+
+The landing page is served, so it costs the QR nothing. It reads the *same*
+bytes and shows what arrived:
+
+- the 24 convolution kernels, drawn from the actual bits — white is +1, dark is −1
+- the ten per-digit scores for whatever you just drew
+- the 28×28 the network is actually given, next to your 280×280 drawing
+- where the 2,948 bytes went
+
+It never reimplements the network: `build.py` splices the same `infer.js` into
+both the payload and the viewer, so they cannot drift.
 
 ## Verified, not asserted
 
 ```
-js/numpy agreement   300/300          verify.mjs, same packed bytes
-QR PNG decode        EXACT MATCH      2,911/2,911 bytes recovered from the image
-full test set        96.37%           n=10,000, scored from the decoded payload
-Safari end-to-end    11/12 digits     data: URI -> gunzip -> unpack -> predict
+js/numpy agreement   300/300        same packed bytes, node vs numpy
+QR decode            zbar, 480p-2400p, every size tested
+full test set        96.37%         n=10,000, scored from the decoded payload
+end-to-end           draw → 28×28 → scores → prediction, in Chrome
 ```
 
-## Reproduce
+## Build
 
 ```sh
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install segno
+npm install terser
+
 .venv/bin/python train.py mnist_data 24 6 model.npz   # downloads MNIST, ~15 min
-.venv/bin/python build.py model.npz                   # packs + writes mnist_qr.png
+.venv/bin/python build.py model.npz                   # packs, writes docs/ and the QR
 node verify.mjs                                       # gate: JS must match numpy
 ```
-
-## Two builds, because Chrome closed the obvious door
-
-Chrome blocks **all** top-frame navigations to `data:` URLs — including ones you
-type into the omnibox. Safari allows them. So a genuinely self-contained payload
-is Safari-only, and that is a deliberate browser decision, not a bug in the
-payload.
-
-The fix is to carry the same bytes in a **URL fragment**. Fragments are never
-sent to the server, so the model still travels entirely inside the QR code; the
-page it lands on is a 1 KB static stub that inflates what the scanner already
-carried. It never sees, stores or transmits anything.
-
-| build | payload | QR | works in |
-|---|---|---|---|
-| `mnist_qr.png` — self-contained `data:` URI | 2,911 B | v40, 177 modules | Safari only |
-| **`mnist_qr_universal.png` — fragment** | **2,792 B** | **v39, 161 modules** | **every browser** |
-
-The universal one is *smaller*, because dropping the inline loader freed 119
-bytes — enough to drop a whole QR version. Fewer modules also means it scans
-from further away.
-
-Verified in headless Chrome: the fragment decodes, inflates and renders the
-classifier, canvas and all.
-
-## The other real limitation
-
-**Scanning.** Both codes decode reliably from 480p up, measured with `zbar`
-across 480/600/720/900/1080/1200/1600/2400 px captures. The universal build is
-QR v39 (161 modules) rather than v40 (177), so it is the easier of the two to
-read. An earlier draft of this README claimed a 1080p floor; that was an
-artifact of OpenCV's QR detector, which fails on these codes entirely while
-`zbar` and phone cameras read them fine.
-
-## How it is delivered
-
-The QR holds a `data:text/html` URI containing a ~160-byte loader. That loader
-`fetch`es a base64 gzip stream, inflates it with `DecompressionStream('gzip')`,
-and `document.write`s the result. Budget after the outer base64's 4/3 expansion:
-
-```
-QR ceiling              2,953 B
-  loader shell            164 B
-  gzip(page) x 4/3      2,747 B   ->  page must gzip to 2,091 B
-      code                1,339 B
-      weights               627 B
-```
-
-Two decisions came out of measuring that table rather than guessing:
-
-- **Centring moved from inference to training.** Normalising the digit at
-  inference cost 261 gzipped bytes on every scan forever. Random-shift
-  augmentation during training buys the same robustness for zero payload bytes.
-- **`drawImage` replaced the downsample loop.** MNIST normalises each digit into
-  a 20×20 box centred in 28×28; the browser's own resampler does that in one
-  call, so the UI does no pixel arithmetic of its own.
 
 ## Files
 
 | | |
 |---|---|
 | `train.py` | binary-weight CNN, explicit gradients, numpy only, no autograd |
-| `infer.js` | unpack + predict. Inlined into the payload *and* loaded by `verify.mjs`, so the demo and its test cannot drift |
-| `build.py` | packs weights to bits, builds the page, emits the QR, mirrors `infer.js` in numpy as a cross-check |
+| `infer.js` | unpack + score. Spliced into the payload *and* the viewer *and* loaded by `verify.mjs` |
+| `page.src.html` | the payload: what the QR carries. Readable; terser minifies it at build time |
+| `viewer.src.html` | the hosted page around it |
+| `build.py` | packs weights to bits, assembles both pages, emits the QR, mirrors `infer.js` in numpy as a cross-check |
 | `verify.mjs` | the gate |
+
+## Two decisions the byte budget forced
+
+- **Centring moved from inference to training.** Normalising the digit at
+  inference cost 261 gzipped bytes on every scan, forever. Random-shift
+  augmentation during training buys the same robustness for zero payload bytes.
+- **Convolution replaced the dense first layer.** 95.4% → 97.3% while using
+  *fewer* bits. A dense layer was burning 12,544 of 13,184 weights on one matrix.

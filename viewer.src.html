@@ -91,7 +91,7 @@
     </div>
 
     <div style="margin-top:26px">
-      <div class="label">The network itself &mdash; 24 5&times;5 kernels</div>
+      <div class="label">The network itself &mdash; FILTER_COUNT 5&times;5 kernels</div>
       <div class="panel">
         <div id="filters"></div>
         <p class="sub" style="margin-top:12px">Every weight is one bit: white is +1, dark is
@@ -100,16 +100,16 @@
     </div>
 
     <div style="margin-top:26px">
-      <div class="label">Where the 2,948 bytes went</div>
+      <div class="label">Where the PAYLOAD_BYTES bytes went</div>
       <div class="panel">
         <div class="budget">
-          <span style="width:21.2%;background:var(--live)"></span>
-          <span style="width:78.6%;background:#3a4247"></span>
+          <span style="width:WEIGHT_PCT%;background:var(--live)"></span>
+          <span style="width:CODE_PCT%;background:#3a4247"></span>
         </div>
         <div class="keys">
-          <span><i style="background:var(--live)"></i>weights 627 B</span>
-          <span><i style="background:#3a4247"></i>code + interface 2,321 B</span>
-          <span><i style="background:#1f2428"></i>spare 5 B</span>
+          <span><i style="background:var(--live)"></i>weights WEIGHT_BYTES B</span>
+          <span><i style="background:#3a4247"></i>code + interface CODE_BYTES B</span>
+          <span><i style="background:#1f2428"></i>spare SPARE_BYTES B</span>
         </div>
       </div>
     </div>
@@ -118,15 +118,15 @@
       <div class="label">Numbers</div>
       <div class="panel">
         <table>
-          <tr><td>Accuracy, all 10,000 test images</td><td>96.37%</td></tr>
-          <tr><td>Weights</td><td>627 B, 1 bit each</td></tr>
-          <tr><td>QR payload</td><td>2,948 / 2,953 B</td></tr>
+          <tr><td>Accuracy, all 10,000 test images</td><td>ACCURACY%</td></tr>
+          <tr><td>Weights</td><td>WEIGHT_BYTES B, 1 bit each</td></tr>
+          <tr><td>QR payload</td><td>PAYLOAD_BYTES / QR_MAX B</td></tr>
           <tr><td>Sent to the server when you scan</td><td>nothing</td></tr>
         </table>
         <p class="flow" style="margin:14px 0 0">
           <b>280&times;280</b> drawing &rarr; crop to ink &rarr; <b>28&times;28</b> &rarr;
-          <b>24</b> conv 5&times;5 &rarr; ReLU &rarr; pool to
-          <b>4&times;4</b> &rarr; dense &rarr; <b>10</b> scores
+          <b>FILTER_COUNT</b> conv 5&times;5 &rarr; ReLU &rarr; pool to
+          <b>GRID&times;GRID</b> &rarr; dense &rarr; <b>10</b> scores
         </p>
       </div>
     </div>
@@ -140,117 +140,8 @@
 </div>
 
 <script>
-  // The model and the classifier. Shared by the QR payload and by verify.mjs, so
-// the demo and its test can never drift apart.
-//
-// This file is written to be read. It gets minified and mangled by terser at
-// build time, so names here cost nothing in the final payload.
-
-// Unpack the model from the bytes the QR code carries.
-//
-// Byte layout:
-//   [0]          number of convolution filters
-//   [1]          pooled grid size (the feature map is grid x grid after pooling)
-//   [2 .. 14)    three float32 scales, one for each int8 array below
-//   [14 .. )     int8 channel scale, int8 channel shift, int8 per-class bias
-//   then         one bit per weight, most significant first:
-//                first the convolution kernels, then the dense layer
-function unpackModel(base64) {
-  const raw = atob(base64);
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-
-  const header = new DataView(bytes.buffer);
-  const filters = bytes[0];
-  const grid = bytes[1];
-
-  // Each int8 array shares a single float32 scale. Undo that here.
-  function dequantise(offset, count, scale) {
-    const out = new Float32Array(count);
-    for (let i = 0; i < count; i++) {
-      out[i] = (bytes[offset + i] << 24 >> 24) * scale;   // sign-extend to int8
-    }
-    return out;
-  }
-
-  const channelScale = dequantise(14, filters, header.getFloat32(2, true));
-  const channelShift = dequantise(14 + filters, filters, header.getFloat32(6, true));
-  const classBias = dequantise(14 + 2 * filters, 10, header.getFloat32(10, true));
-
-  // Every weight is one bit, meaning +1 or -1. That is the whole reason the
-  // model fits: 627 bytes holds just over 5,000 of them.
-  let bit = (14 + 2 * filters + 10) * 8;
-  function readSigns(count) {
-    const out = new Int8Array(count);
-    for (let i = 0; i < count; i++, bit++) {
-      out[i] = (bytes[bit >> 3] >> (7 - (bit & 7))) & 1 ? 1 : -1;
-    }
-    return out;
-  }
-
-  return {
-    filters,
-    grid,
-    channelScale,
-    channelShift,
-    classBias,
-    convWeights: readSigns(25 * filters),
-    denseWeights: readSigns(grid * grid * filters * 10),
-  };
-}
-
-// Score one image against all ten digits. `pixels` is a Float32Array of 784
-// values in 0..1, row-major 28x28. Returns the ten logits; the caller picks the
-// argmax. Returning scores rather than a single digit lets the page show how
-// confident the network was, which is most of what makes it legible.
-//
-// The network is: 5x5 convolution -> BatchNorm -> ReLU -> max-pool -> dense.
-function scoreDigits(pixels, model) {
-  const { filters, grid, convWeights, denseWeights } = model;
-  const poolSize = 24 / grid;
-
-  // Convolution. No padding, so 28x28 becomes 24x24.
-  const activations = new Float32Array(24 * 24 * filters);
-  for (let y = 0; y < 24; y++) {
-    for (let x = 0; x < 24; x++) {
-      for (let f = 0; f < filters; f++) {
-        let sum = 0;
-        for (let tap = 0; tap < 25; tap++) {
-          const pixel = (y + (tap / 5 | 0)) * 28 + x + tap % 5;
-          sum += pixels[pixel] * convWeights[tap * filters + f];
-        }
-        // BatchNorm was folded into one scale and shift per channel at export,
-        // so inference is a multiply, an add, and a ReLU.
-        const value = model.channelScale[f] * sum + model.channelShift[f];
-        activations[(y * 24 + x) * filters + f] = value > 0 ? value : 0;
-      }
-    }
-  }
-
-  // Max-pool and accumulate the dense layer in the same pass, so the pooled
-  // feature map never has to be written out.
-  const logits = Float32Array.from(model.classBias);
-  for (let row = 0; row < grid; row++) {
-    for (let col = 0; col < grid; col++) {
-      for (let f = 0; f < filters; f++) {
-        let peak = 0;
-        for (let dy = 0; dy < poolSize; dy++) {
-          for (let dx = 0; dx < poolSize; dx++) {
-            const at = ((row * poolSize + dy) * 24 + col * poolSize + dx) * filters + f;
-            if (activations[at] > peak) peak = activations[at];
-          }
-        }
-        const base = ((row * grid + col) * filters + f) * 10;
-        for (let digit = 0; digit < 10; digit++) {
-          logits[digit] += peak * denseWeights[base + digit];
-        }
-      }
-    }
-  }
-
-  return logits;
-}
-
+  /* INFER_JS is spliced in here at build time: the same unpackModel and
+     scoreDigits the payload uses, so this viewer never reimplements the network. */
 
   main();
 

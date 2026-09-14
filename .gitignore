@@ -6,3 +6,4 @@ mnist_data/
 
 # Personal learning plan, not part of this project.
 ROADMAP.md
+node_modules/

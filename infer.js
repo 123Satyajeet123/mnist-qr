@@ -57,11 +57,13 @@ function unpackModel(base64) {
   };
 }
 
-// Classify one image. `pixels` is a Float32Array of 784 values in 0..1,
-// row-major 28x28. Returns the predicted digit.
+// Score one image against all ten digits. `pixels` is a Float32Array of 784
+// values in 0..1, row-major 28x28. Returns the ten logits; the caller picks the
+// argmax. Returning scores rather than a single digit lets the page show how
+// confident the network was, which is most of what makes it legible.
 //
 // The network is: 5x5 convolution -> BatchNorm -> ReLU -> max-pool -> dense.
-function classify(pixels, model) {
+function scoreDigits(pixels, model) {
   const { filters, grid, convWeights, denseWeights } = model;
   const poolSize = 24 / grid;
 
@@ -104,9 +106,5 @@ function classify(pixels, model) {
     }
   }
 
-  let best = 0;
-  for (let digit = 1; digit < 10; digit++) {
-    if (logits[digit] > logits[best]) best = digit;
-  }
-  return best;
+  return logits;
 }
