@@ -42,7 +42,7 @@ buys filters. That is why the pool is 6×6 and not 2×2.
 
 ```sh
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install segno
-npm install terser
+npm install
 
 .venv/bin/python train.py mnist_data 24 6 model.npz   # downloads MNIST, ~15 min
 .venv/bin/python build.py model.npz                   # writes docs/ and the QR

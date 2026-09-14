@@ -1,0 +1,8 @@
+{
+  "name": "mnist-qr",
+  "private": true,
+  "description": "Build-time minifier for the QR payload.",
+  "devDependencies": {
+    "terser": "^5.51.2"
+  }
+}
