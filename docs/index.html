@@ -6,30 +6,38 @@
   * { box-sizing: border-box }
   body {
     margin: 0;
-    padding: 20px 16px 48px;
+    padding: 16px 16px 44px;
     background: var(--bg);
     color: var(--ink);
     font: 14px/1.5 ui-sans-serif, system-ui, sans-serif;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 22px;
   }
-  .col { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 22px }
+  .col { width: 100%; max-width: 356px; display: flex; flex-direction: column; gap: 18px }
 
-  #stage { width: 100%; height: 400px; border: 0; display: block }
+  #stage { width: 100%; border: 0; display: block; overflow: hidden }
 
-  /* Ten scores, one row each. The digits label themselves. */
-  #bars { display: grid; grid-template-columns: 12px 1fr; gap: 4px 9px; align-items: center }
-  #bars b { font: 500 11px ui-monospace, monospace; color: var(--dim); text-align: right }
-  #bars div { height: 7px; background: #1b1f22; border-radius: 4px; overflow: hidden }
-  #bars i { display: block; height: 100%; background: #333a3f; border-radius: 4px; transition: width .15s }
+  .step { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px }
+  .step em {
+    font: 500 10px/1 ui-monospace, monospace;
+    letter-spacing: .1em;
+    color: var(--live);
+    font-style: normal;
+  }
+  .step span { font-size: 12px; color: var(--dim) }
 
-  /* The kernels, as they are. */
-  #filters { margin-top: 6px; display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px }
-  #filters canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 2px }
+  /* 24 activation maps, one per filter, live. */
+  #maps { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px }
+  #maps canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 2px; background: #14181a }
 
-  footer { color: var(--dim); font-size: 12.5px; text-align: center }
+  /* Ten scores as one row, not ten stacked bars. */
+  #scores { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; align-items: end; height: 62px }
+  #scores div { display: flex; flex-direction: column; justify-content: flex-end; height: 100% }
+  #scores i { display: block; background: #2d3438; border-radius: 2px 2px 0 0; transition: height .18s }
+  #scores b { font: 500 10px/1.6 ui-monospace, monospace; color: var(--dim); text-align: center }
+
+  footer { color: var(--dim); font-size: 12px; text-align: center }
   a { color: var(--dim) }
   #fallback { color: var(--dim); text-align: center; padding: 40px 0 }
 </style>
@@ -38,12 +46,23 @@
   <div id="fallback">Scan the code, or <a href="./demo.html">open the demo</a>.</div>
 
   <div id="app" hidden>
-    <iframe id="stage" title="digit classifier"></iframe>
-    <div id="bars"></div>
-    <div id="filters"></div>
+    <div>
+      <div class="step"><em>DRAW</em><span>a digit here, with your finger</span></div>
+      <iframe id="stage" title="digit classifier"></iframe>
+    </div>
+
+    <div>
+      <div class="step"><em>CONV</em><span>24 filters see the 28&times;28</span></div>
+      <div id="maps"></div>
+    </div>
+
+    <div>
+      <div class="step"><em>DENSE</em><span>ten scores</span></div>
+      <div id="scores"></div>
+    </div>
+
     <footer>
       627 B of weights, one bit each &middot; 96.37% on 10,000 digits &middot;
-      all of it in the URL &middot;
       <a href="https://github.com/123Satyajeet123/mnist-qr">source</a>
     </footer>
   </div>
@@ -107,16 +126,13 @@ function unpackModel(base64) {
   };
 }
 
-// Score one image against all ten digits. `pixels` is a Float32Array of 784
-// values in 0..1, row-major 28x28. The caller picks the argmax.
-//
-// 5x5 convolution -> BatchNorm -> ReLU -> max-pool -> dense.
-function scoreDigits(pixels, model) {
-  const { filters, grid, convWeights, denseWeights } = model;
-  const poolSize = 24 / grid;
-
-  // Convolution. No padding, so 28x28 becomes 24x24.
+// Run the convolution over one 28x28 image and return the 24x24 activations,
+// one plane per filter, interleaved. The viewer draws these; scoreDigits pools
+// them. Kept separate so both read the same code.
+function convolve(pixels, model) {
+  const { filters, convWeights } = model;
   const activations = new Float32Array(24 * 24 * filters);
+
   for (let y = 0; y < 24; y++) {
     for (let x = 0; x < 24; x++) {
       for (let f = 0; f < filters; f++) {
@@ -131,6 +147,17 @@ function scoreDigits(pixels, model) {
       }
     }
   }
+  return activations;
+}
+
+// Score one image against all ten digits. `pixels` is a Float32Array of 784
+// values in 0..1, row-major 28x28. The caller picks the argmax.
+//
+// 5x5 convolution -> BatchNorm -> ReLU -> max-pool -> dense.
+function scoreDigits(pixels, model) {
+  const { filters, grid, denseWeights } = model;
+  const poolSize = 24 / grid;
+  const activations = convolve(pixels, model);
 
   // Max-pool and accumulate the dense layer in one pass.
   const logits = Float32Array.from(model.classBias);
@@ -156,6 +183,9 @@ function scoreDigits(pixels, model) {
 }
 
 
+  const SIDE = 24;
+  let cells = [];
+
   main();
 
   async function main() {
@@ -172,10 +202,24 @@ function scoreDigits(pixels, model) {
     // Unpack the weights from the same bytes running in the frame. The payload
     // is mangled, so find the blob by shape: the only long base64 literal.
     const model = unpackModel(payload.match(/"([A-Za-z0-9+/]{200,}={0,2})"/)[1]);
-    drawFilters(model);
-    drawBars(new Float32Array(10), -1);
+    buildMaps(model.filters);
+    buildScores();
 
-    stage.addEventListener("load", () => watch(stage.contentWindow, model));
+    stage.addEventListener("load", () => {
+      fit(stage);
+      watch(stage.contentWindow, model);
+    });
+  }
+
+  // Size the frame to its content. A fixed height gives the payload its own
+  // scrollbar, which on a phone is a second scroll region inside the page.
+  function fit(stage) {
+    const body = stage.contentDocument.body;
+    const resize = () => {
+      stage.style.height = body.scrollHeight + "px";
+    };
+    resize();
+    new ResizeObserver(resize).observe(body);
   }
 
   async function inflate(fragment) {
@@ -186,8 +230,8 @@ function scoreDigits(pixels, model) {
     return new Response(stream).text();
   }
 
-  // The payload owns the drawing surface. Score its 28x28 input here rather
-  // than asking the payload to report anything back.
+  // The payload owns the drawing surface. Read its 28x28 input and run the same
+  // network here rather than asking the payload to report anything back.
   function watch(frame, model) {
     const seen = frame.document.getElementById("seen");
     frame.document.getElementById("pad").addEventListener("pointerup", () => {
@@ -196,45 +240,64 @@ function scoreDigits(pixels, model) {
         const pixels = new Float32Array(784);
         for (let i = 0; i < 784; i++) pixels[i] = image[i * 4 + 3] / 255;
         if (!pixels.some(value => value > 0)) return;
-        const scores = scoreDigits(pixels, model);
-        drawBars(scores, scores.indexOf(Math.max(...scores)));
+        drawMaps(convolve(pixels, model), model.filters);
+        drawScores(scoreDigits(pixels, model));
       }, 0);
     });
   }
 
-  function drawBars(scores, winner) {
-    const low = Math.min(...scores);
-    const span = Math.max(...scores) - low || 1;
-    bars.innerHTML = "";
-    scores.forEach((score, digit) => {
-      const label = document.createElement("b");
-      label.textContent = digit;
-      const track = document.createElement("div");
-      const fill = document.createElement("i");
-      fill.style.width = winner < 0 ? "0%" : Math.max(2, ((score - low) / span) * 100) + "%";
-      if (digit === winner) {
-        label.style.color = "var(--live)";
-        fill.style.background = "var(--live)";
-      }
-      track.appendChild(fill);
-      bars.append(label, track);
-    });
+  function buildMaps(filters) {
+    maps.innerHTML = "";
+    cells = [];
+    for (let f = 0; f < filters; f++) {
+      const cell = document.createElement("canvas");
+      cell.width = cell.height = SIDE;
+      maps.appendChild(cell);
+      cells.push(cell.getContext("2d"));
+    }
   }
 
-  // One bit per weight: white for +1, dark for -1.
-  function drawFilters(model) {
-    filters.innerHTML = "";
-    for (let f = 0; f < model.filters; f++) {
-      const cell = document.createElement("canvas");
-      cell.width = cell.height = 5;
-      const context = cell.getContext("2d");
-      const image = context.createImageData(5, 5);
-      for (let tap = 0; tap < 25; tap++) {
-        const level = model.convWeights[tap * model.filters + f] > 0 ? 226 : 32;
-        image.data.set([level, level, level, 255], tap * 4);
+  // One plane per filter, interleaved. Scale each map to its own peak so a
+  // quiet filter is still visible.
+  function drawMaps(activations, filters) {
+    for (let f = 0; f < filters; f++) {
+      let peak = 0;
+      for (let i = 0; i < SIDE * SIDE; i++) {
+        const value = activations[i * filters + f];
+        if (value > peak) peak = value;
+      }
+      const context = cells[f];
+      const image = context.createImageData(SIDE, SIDE);
+      for (let i = 0; i < SIDE * SIDE; i++) {
+        const level = peak ? activations[i * filters + f] / peak : 0;
+        image.data.set([20 + level * 58, 24 + level * 177, 26 + level * 139, 255], i * 4);
       }
       context.putImageData(image, 0, 0);
-      filters.appendChild(cell);
     }
+  }
+
+  function buildScores() {
+    scores.innerHTML = "";
+    for (let digit = 0; digit < 10; digit++) {
+      const column = document.createElement("div");
+      const bar = document.createElement("i");
+      bar.style.height = "2px";
+      const label = document.createElement("b");
+      label.textContent = digit;
+      column.append(bar, label);
+      scores.appendChild(column);
+    }
+  }
+
+  function drawScores(logits) {
+    const low = Math.min(...logits);
+    const span = Math.max(...logits) - low || 1;
+    const winner = logits.indexOf(Math.max(...logits));
+    [...scores.children].forEach((column, digit) => {
+      const [bar, label] = column.children;
+      bar.style.height = Math.max(2, ((logits[digit] - low) / span) * 46) + "px";
+      bar.style.background = digit === winner ? "var(--live)" : "#2d3438";
+      label.style.color = digit === winner ? "var(--live)" : "var(--dim)";
+    });
   }
 </script>

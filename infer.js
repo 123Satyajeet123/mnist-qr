@@ -55,16 +55,13 @@ function unpackModel(base64) {
   };
 }
 
-// Score one image against all ten digits. `pixels` is a Float32Array of 784
-// values in 0..1, row-major 28x28. The caller picks the argmax.
-//
-// 5x5 convolution -> BatchNorm -> ReLU -> max-pool -> dense.
-function scoreDigits(pixels, model) {
-  const { filters, grid, convWeights, denseWeights } = model;
-  const poolSize = 24 / grid;
-
-  // Convolution. No padding, so 28x28 becomes 24x24.
+// Run the convolution over one 28x28 image and return the 24x24 activations,
+// one plane per filter, interleaved. The viewer draws these; scoreDigits pools
+// them. Kept separate so both read the same code.
+function convolve(pixels, model) {
+  const { filters, convWeights } = model;
   const activations = new Float32Array(24 * 24 * filters);
+
   for (let y = 0; y < 24; y++) {
     for (let x = 0; x < 24; x++) {
       for (let f = 0; f < filters; f++) {
@@ -79,6 +76,17 @@ function scoreDigits(pixels, model) {
       }
     }
   }
+  return activations;
+}
+
+// Score one image against all ten digits. `pixels` is a Float32Array of 784
+// values in 0..1, row-major 28x28. The caller picks the argmax.
+//
+// 5x5 convolution -> BatchNorm -> ReLU -> max-pool -> dense.
+function scoreDigits(pixels, model) {
+  const { filters, grid, denseWeights } = model;
+  const poolSize = 24 / grid;
+  const activations = convolve(pixels, model);
 
   // Max-pool and accumulate the dense layer in one pass.
   const logits = Float32Array.from(model.classBias);

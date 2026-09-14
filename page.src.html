@@ -17,7 +17,6 @@
      the pixels it works from. */
   #seen { width: 66px; height: 66px; background: #000; image-rendering: pixelated }
   #digit { font: 700 62px system-ui; width: 56px }
-  #hint { color: #666 }
 </style>
 
 <canvas id="pad" width="280" height="280"></canvas>
@@ -25,7 +24,6 @@
   <canvas id="seen" width="28" height="28"></canvas>
   <div id="digit">?</div>
 </div>
-<div id="hint">draw a digit</div>
 
 <script>
   /* INFER_JS and MODEL_BASE64 are filled in by build.py, then terser runs. */
@@ -49,7 +47,6 @@
   }
 
   pad.onpointerdown = function (event) {
-    hint.textContent = "";
     if (digit.textContent !== "?") {
       ink.clearRect(0, 0, 280, 280);
       seen.width = 28;                 // assigning width also clears the canvas

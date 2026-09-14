@@ -73,7 +73,8 @@ def page_html(blob):
         "MODEL_BASE64", json.dumps(blob))
 
     minified = subprocess.run(
-        ["npx", "--no-install", "terser", "--compress", "--mangle", "--toplevel"],
+        ["npx", "--no-install", "terser", "--compress", "passes=3,unsafe=true",
+         "--mangle", "--toplevel"],
         input=combined, capture_output=True, text=True, check=True,
         cwd=HERE).stdout.strip()
 
